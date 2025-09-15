@@ -5,7 +5,7 @@ from setuptools import setup
 __author__ = ['Lorenzo Porrini']
 __email__ = ['lorenzo.porrini2@studio.unibo.it']
 
-PACKAGE_NAME = 'dp-VAE'
+PACKAGE_NAME = 'dp_VAE'
 PACKAGE_VERSION = '0.0.1'
 DESCRIPTION = 'Distance Preserving Variational AutoEncoder applied to spatial transcriptomics data.'
 AUTHOR = 'Lorenzo Porrini'
@@ -52,7 +52,7 @@ setup(
   ],
   entry_points={
         'console_scripts': [
-            'dp-VAE = dp-VAE.main',
+            'dp_VAE = dp_VAE.main',
         ],
     },
 )
