@@ -52,7 +52,7 @@ setup(
   ],
   entry_points={
         'console_scripts': [
-            'dp_VAE = dp_VAE.main',
+            'dp_VAE = dp_VAE.__main__:main',
         ],
     },
 )
