@@ -4,6 +4,89 @@ import torch
 from scipy.stats import pearsonr
 from scipy.spatial import procrustes
 import matplotlib.pyplot as plt
+import scanpy as sc
+from scipy.spatial import procrustes
+from scipy.stats import spearmanr
+
+
+def QC (datasets, device):
+
+    XS_pairs = {}
+    splits = {}
+    # Preprocess the data
+    # Before filtering
+    for key, adata in datasets.items():
+        n_cells_start = adata.n_obs
+        n_genes_start = adata.n_vars
+        adata.var_names_make_unique()
+    
+    
+        # Filter cells with min counts
+        sc.pp.filter_cells(adata, min_counts=4000)
+        n_filtered_min = n_cells_start - adata.n_obs
+        print(f"filtered out {n_filtered_min} cells that have less than 4000 counts")
+    
+        # Filter cells with max counts
+        n_cells_min = adata.n_obs
+        sc.pp.filter_cells(adata, max_counts=38000)
+        n_filtered_max = n_cells_min - adata.n_obs
+        print(f"filtered out {n_filtered_max} cells that have more than 38000 counts")
+    
+        # Mitochondrial filter
+        # Mark mitochondrial genes - for mouse data mt genes usually start with "mt-"
+        adata.var['mt'] = adata.var_names.str.startswith('mt-')  
+    
+        # Calculate QC metrics
+        sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], inplace=True)
+    
+        # Now you can filter cells based on mitochondrial content
+        adata = adata[adata.obs['pct_counts_mt'] < 20].copy()
+        n_cells_max = adata.n_obs
+        n_filtered_mt = n_cells_max - adata.n_obs
+        print(f"filtered out {n_filtered_mt} cells with pct_counts_mt ≥ 20%")
+        print(f"#cells after MT filter: {adata.n_obs}")
+    
+        # Filter genes
+        n_genes_before = adata.n_vars
+        sc.pp.filter_genes(adata, min_cells=10)
+        n_genes_filtered = n_genes_before - adata.n_vars
+        print(f"filtered out {n_genes_filtered} genes that are detected in less than 10 cells")
+    
+        # Normalize and log-transform (paper method)
+        sc.pp.normalize_total(adata, target_sum=1e4)
+        sc.pp.log1p(adata)
+    
+        # Select top 250 highly variable genes (paper method)
+        sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=250)
+        adata = adata[:, adata.var['highly_variable']].copy()
+        print(f"Subsetted to top 250 highly variable genes. Shape: {adata.shape}")
+    
+        # Extract gene expression matrix X and spatial coordinates S
+        X = torch.tensor(adata.X.toarray(), dtype=torch.float32, device=device)
+        # Fix spatial coordinates (ensure float array, not object)
+        S_raw = np.array(adata.obsm["spatial"], dtype=float)
+        S_raw = torch.tensor(S_raw, dtype=torch.float32, device=device)
+    
+        S_mu = S_raw.mean(dim=0, keepdim=True)
+        S_std = S_raw.std(dim=0, keepdim=True)
+        S = (S_raw - S_mu) / S_std  # Standardize
+    
+    
+        print(f"Data shape after preprocessing: {X.shape}")
+        print(f"Coordinates shape: {S.shape}")
+    
+        XS_pairs[key] = (X, S)
+        # Train/test split (point 1)
+        n = X.shape[0]
+        idx = torch.randperm(n, device=device)
+        n_test = max(1, int(0.2 * n))
+        test_idx = idx[:n_test]
+        train_idx = idx[n_test:]
+        splits[key] = (X[train_idx], S[train_idx], X[test_idx], S[test_idx])
+    
+        print(f"[{key}] Preprocessed: X {X.shape}, S {S.shape}")
+    
+    return datasets, XS_pairs, splits
 
 def pairwise_corr_expr_spatial(X, S, use_torch=True):
     """
@@ -58,6 +141,30 @@ def pairwise_corr_expr_spatial(X, S, use_torch=True):
 
     return dict(r=r, pval=pval, ci=(ci_lo, ci_hi), n_pairs=n_pairs,
                 vec_expr=vec_expr, vec_spat=vec_spat)
+
+def correlation_stats(data_dict):
+    corr_results = {}
+    
+    for key, (X, S) in data_dict.items():
+        res = pairwise_corr_expr_spatial(X, S)
+        rho, p_rho = spearmanr(res['vec_spat'], res['vec_expr'])
+
+        corr_results[key] = {
+            "pearson_r": res['r'],
+            "pearson_p": res['pval'],
+            "pearson_CI": res['ci'],
+            "spearman_rho": rho,
+            "spearman_p": p_rho,
+            "n_pairs": res['n_pairs']
+        }
+
+        print(f"\n=== {key.upper()} ===")
+        print("Pearson r = %.4f (p=%.2e, 95%% CI=[%.4f, %.4f])"
+              % (res['r'], res['pval'], res['ci'][0], res['ci'][1]))
+        print("Spearman rho = %.4f (p=%.2e)" % (rho, p_rho))
+        print("n_pairs =", res['n_pairs'])
+    return corr_results
+
 
 def sample_points(n_cells : int):
     """Sample 3 distinct random indices from n_cells."""
