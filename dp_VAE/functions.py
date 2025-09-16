@@ -9,7 +9,53 @@ from scipy.spatial import procrustes
 from scipy.stats import spearmanr
 
 
-def QC (datasets, device):
+def QC (datasets: dict, device: torch.device):
+    """
+    Perform QC and preprocessing on a dict of AnnData datasets.
+
+    Parameters
+    ----------
+    datasets : dict[str, anndata.AnnData]
+        Mapping from dataset key to AnnData object. Each AnnData is expected
+        to have raw counts in `.X` and spatial coordinates in `obsm["spatial"]`.
+    device : torch.device
+        Target device for returned tensors (CPU or CUDA).
+
+    Returns
+    -------
+    datasets : dict[str, anndata.AnnData]
+        The same mapping, with in-place filtering applied (cells/genes subset).
+    XS_pairs : dict[str, tuple[torch.Tensor, torch.Tensor]]
+        For each dataset key, a tuple `(X, S)` where:
+        - `X`: float32 tensor of shape (n_cells, n_genes) on `device`, normalized
+          and log1p-transformed, subset to top 250 highly variable genes.
+        - `S`: float32 tensor of shape (n_cells, 2) on `device`, standardized per
+          coordinate to mean 0 and std 1.
+    splits : dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]
+        For each dataset key, a tuple `(X_train, S_train, X_test, S_test)`
+        corresponding to an 80/20 random split of rows. Tensors are on `device`.
+
+    Notes
+    -----
+    The following preprocessing is applied per dataset:
+    - Make gene names unique via `var_names_make_unique()`.
+    - Filter cells: min total counts ≥ 4,000 and max total counts ≤ 38,000.
+    - Compute QC metrics with mitochondrial genes flagged as names starting with
+      "mt-" (mouse convention), then filter cells with `pct_counts_mt` < 20%.
+    - Filter genes detected in at least 10 cells.
+    - Normalize total counts per cell to 1e4 and apply `log1p` transform.
+    - Select top 250 highly variable genes (Seurat flavor) and subset `adata`.
+    - Convert `.X` to a dense tensor via `.toarray()` (beware memory for large data).
+    - Standardize spatial coordinates `S` per axis: `(S - mean) / std`.
+    - Create an 80/20 random train/test split on rows.
+
+    Examples
+    --------
+    >>> datasets, XS_pairs, splits = QC(datasets, torch.device('cpu'))
+    >>> X, S = XS_pairs['sagittal_posterior']
+    >>> X.shape, S.shape
+    ((n_cells, 250), (n_cells, 2))
+    """
 
     XS_pairs = {}
     splits = {}
@@ -90,9 +136,39 @@ def QC (datasets, device):
 
 def pairwise_corr_expr_spatial(X, S, use_torch=True):
     """
-    X: torch.Tensor (n, g) or numpy array
-    S: torch.Tensor (n, 2) or numpy array
-    returns: r, pvalue, ci_lower, ci_upper, n_pairs
+    Compute Pearson correlation (and 95% CI) between pairwise distances in
+    expression space (X) and spatial coordinates (S).
+
+    Parameters
+    ----------
+    X : torch.Tensor | numpy.ndarray, shape (n_cells, n_genes)
+        Gene expression matrix. If a Tensor, it will be moved to CPU for
+        distance computation; dtype should be float32/float64.
+    S : torch.Tensor | numpy.ndarray, shape (n_cells, 2)
+        Spatial coordinates (e.g., Visium spot positions). If a Tensor,
+        it will be moved to CPU; dtype should be float32/float64.
+    use_torch : bool, optional
+        Unused placeholder (kept for backward compatibility).
+
+    Returns
+    -------
+    out : dict
+        Dictionary with keys:
+        - 'r' (float): Pearson correlation coefficient.
+        - 'pval' (float): Two-sided p-value for r.
+        - 'ci' (tuple[float, float]): 95% CI via Fisher's z-transform.
+        - 'n_pairs' (int): Number of unique pairs (n_cells choose 2).
+        - 'vec_expr' (numpy.ndarray): Upper-triangular pairwise distances from X.
+        - 'vec_spat' (numpy.ndarray): Upper-triangular pairwise distances from S.
+
+    Notes
+    -----
+    - Distances are Euclidean; only the upper triangle (i < j) is used.
+    - r is clipped to (-0.9999999, 0.9999999) before Fisher transform.
+
+    See Also
+    --------
+    correlation_stats : Batch version that prints stats per dataset.
     """
     # convert to numpy
     if isinstance(X, torch.Tensor):
@@ -143,6 +219,21 @@ def pairwise_corr_expr_spatial(X, S, use_torch=True):
                 vec_expr=vec_expr, vec_spat=vec_spat)
 
 def correlation_stats(data_dict):
+    """
+    Compute and print Pearson/Spearman stats for multiple datasets.
+
+    Parameters
+    ----------
+    data_dict : dict[str, tuple[torch.Tensor | numpy.ndarray, torch.Tensor | numpy.ndarray]]
+        Mapping of dataset key to a tuple (X, S).
+
+    Returns
+    -------
+    corr_results : dict[str, dict]
+        For each key, a dictionary with 'pearson_r', 'pearson_p', 'pearson_CI',
+        'spearman_rho', 'spearman_p', and 'n_pairs'. Also prints a formatted
+        summary to stdout as a side effect.
+    """
     corr_results = {}
     
     for key, (X, S) in data_dict.items():
@@ -166,17 +257,67 @@ def correlation_stats(data_dict):
     return corr_results
 
 
-def sample_points(n_cells : int):
-    """Sample 3 distinct random indices from n_cells."""
+def sample_points(n_cells: int):
+    """
+    Sample three distinct random indices from 0..n_cells-1.
+
+    Parameters
+    ----------
+    n_cells : int
+        Total number of points.
+
+    Returns
+    -------
+    idx : numpy.ndarray, shape (3,)
+        Random indices without replacement.
+    """
     return np.random.choice(n_cells, size=3, replace=False)
 
 def get_coordinates(indices, coordinates, latent_space):
-    """Get the coordinates in normal and latent space"""
+    """
+    Extract coordinates for given indices from spatial and latent arrays.
+
+    Parameters
+    ----------
+    indices : array-like, shape (k,)
+        Integer indices to select.
+    coordinates : numpy.ndarray, shape (n, 2)
+        Spatial coordinates array.
+    latent_space : numpy.ndarray, shape (n, 2)
+        Latent coordinates array.
+
+    Returns
+    -------
+    normal_coords : numpy.ndarray, shape (k, 2)
+        Selected rows from `coordinates`.
+    latent_coords : numpy.ndarray, shape (k, 2)
+        Selected rows from `latent_space`.
+    """
     normal_coords = coordinates[indices, :2]
     latent_coords = latent_space[indices, :2]
     return normal_coords, latent_coords
 
 def plot_triplets(spatial_pts, latent_pts, spatial_pts2=None, latent_pts2=None, S=None, Z=None, savepath="triplets.png"):
+    """
+    Plot two triplets over spatial and latent backgrounds and save to disk.
+
+    Parameters
+    ----------
+    spatial_pts : numpy.ndarray, shape (3, 2)
+        First spatial triplet.
+    latent_pts : numpy.ndarray, shape (3, 2)
+        First latent triplet.
+    spatial_pts2 : numpy.ndarray, shape (3, 2), optional
+        Second spatial triplet.
+    latent_pts2 : numpy.ndarray, shape (3, 2), optional
+        Second latent triplet.
+    S : numpy.ndarray, shape (n, 2), optional
+        Background spatial coordinates to scatter in gray.
+    Z : numpy.ndarray, shape (n, 2), optional
+        Background latent coordinates to scatter in gray.
+    savepath : str, optional
+        Path to save the PNG.
+    """
     colors = ['red', 'blue']
     labels = ['Triplet 1', 'Triplet 2']
 
@@ -228,10 +369,42 @@ def plot_triplets(spatial_pts, latent_pts, spatial_pts2=None, latent_pts2=None, 
     plt.close()
 
 def test_triplet(model, X, S, seed=42, savepath="triplets.png", mu=None, z=None):
-    """Sample a triplet of points and return their spatial + latent coordinates.
+    """
+    Sample two random triplets and return the first; save a comparison plot.
 
     Allows passing precomputed mu or z to avoid full re-encoding cost for large X.
     If both mu and z are None, encodes X once (deterministic using mu as embedding).
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Trained model exposing `encode(X) -> (mu, logvar)`.
+    X : torch.Tensor | numpy.ndarray, shape (n_cells, n_genes)
+        Expression matrix.
+    S : torch.Tensor | numpy.ndarray, shape (n_cells, 2)
+        Spatial coordinates.
+    seed : int, optional
+        RNG seed for reproducible triplet sampling.
+    savepath : str, optional
+        File path to save the visualization.
+    mu : torch.Tensor, shape (n_cells, 2), optional
+        Precomputed mean embeddings.
+    z : torch.Tensor, shape (n_cells, 2), optional
+        Precomputed latent coordinates; if provided, used directly.
+
+    Returns
+    -------
+    idx : numpy.ndarray, shape (3,)
+        Indices of the first triplet.
+    spatial_pts : numpy.ndarray, shape (3, 2)
+        Spatial coordinates for the first triplet.
+    latent_pts : numpy.ndarray, shape (3, 2)
+        Latent coordinates for the first triplet.
+
+    Raises
+    ------
+    ValueError
+        If fewer than 3 points are available in `X`.
     """
     
     np.random.seed(seed)
@@ -271,8 +444,17 @@ def test_triplet(model, X, S, seed=42, savepath="triplets.png", mu=None, z=None)
 
 def triangle_angles(pts):
     """
-    Compute the 3 internal angles (in radians) of a triangle
-    defined by points pts: array shape (3, 2).
+    Compute the three internal angles (in radians) of a triangle.
+
+    Parameters
+    ----------
+    pts : numpy.ndarray, shape (3, 2)
+        Triangle vertices.
+
+    Returns
+    -------
+    angles : numpy.ndarray, shape (3,)
+        Angles (alpha, beta, gamma) in radians.
     """
     a = np.linalg.norm(pts[1] - pts[2])
     b = np.linalg.norm(pts[0] - pts[2])
@@ -285,12 +467,26 @@ def triangle_angles(pts):
 
 
 def compare_triangles(spatial_pts, latent_pts):
-    """Compare triangle geometry between spatial and latent points.
+    """
+    Compare triangle geometry between spatial and latent points.
 
     Parameters
     ----------
-    spatial_pts, latent_pts : array-like (3,2)
-        Triangle vertices."""
+    spatial_pts : numpy.ndarray, shape (3, 2)
+        Spatial triangle vertices.
+    latent_pts : numpy.ndarray, shape (3, 2)
+        Latent triangle vertices.
+
+    Returns
+    -------
+    comparison : dict
+        Contains:
+        - 'angles_spatial_deg': angles of spatial triangle (degrees)
+        - 'angles_latent_deg' : angles of latent triangle (degrees)
+        - 'angle_error_deg'   : absolute per-angle errors (degrees)
+        - 'mean_angle_error_deg' : average angle error (degrees)
+        - 'normalized_side_ratios': side ratios in latent normalized by mean
+    """
     
     angles_spatial = triangle_angles(spatial_pts)
     angles_latent  = triangle_angles(latent_pts)
@@ -316,13 +512,43 @@ def compare_triangles(spatial_pts, latent_pts):
 
 # Procrustes distance
 def procrustes_distance(z, s):
+    """
+    Compute Procrustes disparity between latent and spatial coordinates.
+
+    Parameters
+    ----------
+    z : torch.Tensor, shape (n, 2)
+        Latent coordinates.
+    s : torch.Tensor, shape (n, 2)
+        Spatial coordinates.
+
+    Returns
+    -------
+    disparity : float
+        The Procrustes disparity (lower is better), as returned by SciPy.
+    """
     _, _, disparity = procrustes(s.cpu().numpy(), z.cpu().numpy())
     return disparity
 
 def spatial_reconstruction_error(model, X, S, mask=None):
     """
-    Compute per-spot reconstruction error of spatial distances.
-    Returns vector of errors, one per spot.
+    Compute per-spot mean absolute discrepancy in the distance-preserving term.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Model exposing `.encode(X)` and scalar attribute `.lam`.
+    X : torch.Tensor, shape (n, g)
+        Expression matrix on the same device as `model`.
+    S : torch.Tensor, shape (n, 2)
+        Spatial coordinates on the same device.
+    mask : torch.Tensor | None, shape (n, n), optional
+        Optional binary mask to restrict pairwise contributions.
+
+    Returns
+    -------
+    errors : numpy.ndarray, shape (n,)
+        Mean absolute discrepancy per spot: mean_j | ||z_i - z_j|| - lam * ||s_i - s_j|| |.
     """
     with torch.no_grad():
         mu, _ = model.encode(X)
@@ -337,6 +563,20 @@ def spatial_reconstruction_error(model, X, S, mask=None):
     return per_spot_err
 
 def plot_spatial_error(S, errors, title, savepath):
+    """
+    Scatter spatial points colored by a per-spot error scalar and save to disk.
+
+    Parameters
+    ----------
+    S : numpy.ndarray, shape (n, 2)
+        Spatial coordinates.
+    errors : numpy.ndarray, shape (n,)
+        Per-spot scalar errors.
+    title : str
+        Plot title.
+    savepath : str
+        File path to save the figure (PNG).
+    """
     plt.figure(figsize=(6,6))
     plt.scatter(S[:,0], S[:,1], c=errors, cmap="viridis", s=8)
     plt.colorbar(label="Reconstruction error")
