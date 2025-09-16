@@ -14,7 +14,46 @@ LAM_MAX = 1e3   # Maximum value for λ
 LAM_REG_WEIGHT = 0  # Weight for λ regularization term
 
 class dpVAE(nn.Module):
-    "Distance Preserving Variational Autoencoder"
+    """
+    Distance-Preserving Variational Autoencoder (dp-VAE).
+
+    This VAE augments the standard ELBO with a distance-preserving (DP)
+    regularizer to align pairwise distances in the latent space with those in
+    the spatial domain. It supports optional k-NN masking (single or multi-
+    scale union) for the DP term, and a learnable scale parameter λ using a
+    stable log-parameterization.
+
+    Parameters
+    ----------
+    input_dim : int
+        Number of input genes (features).
+    z_dim : int, default=2
+        Latent dimensionality.
+    hidden_dim : int, default=124
+        Hidden layer size for encoder/decoder MLPs.
+    alpha1 : float, default=1.0
+        Weight on the ELBO term.
+    beta : float, default=2.0
+        Temperature on the KL term (β-VAE style).
+    alpha2 : float, default=0.1
+        Weight on the distance-preserving loss.
+    lam_init : float | None, default=None
+        Initial value for λ (distance scale). If None, uses 1.0.
+    mask_k : int | Iterable[int | None] | None, default=None
+        Mask specification for the DP term:
+        - None → no mask (all pairs)
+        - int → single k-NN (undirected)
+        - iterable → union of specified k-NN graphs; if any element is None,
+          masking is disabled (full pairwise).
+    learn_lam : bool, default=True
+        If True, λ is learned via log-parameterization; otherwise fixed.
+
+    Notes
+    -----
+    - λ is represented internally as `lam_raw` with λ = clamp(exp(lam_raw),
+      [LAM_MIN, LAM_MAX]).
+    - Pairwise distances use Euclidean metric.
+    """
     def __init__(self, input_dim, z_dim=2, hidden_dim=124,
                  alpha1=1.0, beta=2.0, alpha2=0.1, lam_init=None, mask_k=None, learn_lam=True):
         super().__init__()
@@ -52,37 +91,116 @@ class dpVAE(nn.Module):
         self._mask_cache = {}
     
     def encode(self, x):
-        "Encode input x to latent space parameters mu and logvar"
+        """
+        Encode inputs into mean and log-variance of the latent Gaussian.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape (n, input_dim)
+            Input expression tensor on the same device as the model.
+
+        Returns
+        -------
+        mu : torch.Tensor, shape (n, z_dim)
+            Mean of q(z|x).
+        logvar : torch.Tensor, shape (n, z_dim)
+            Log-variance of q(z|x).
+        """
         h = F.relu(self.enc_fc1(x))
         mu = self.enc_mu(h)
         logvar = self.enc_logvar(h)
         return mu, logvar
 
     def decode(self, z):
-        "Decode latent variable z to reconstruct input"
+        """
+        Decode latent variables back to the input space.
+
+        Parameters
+        ----------
+        z : torch.Tensor, shape (n, z_dim)
+            Latent samples or means.
+
+        Returns
+        -------
+        x_recon : torch.Tensor, shape (n, input_dim)
+            Reconstruction logits/values (Gaussian likelihood assumed).
+        """
         h = F.relu(self.dec_fc1(z))
         return self.dec_out(h)  # Gaussian likelihood → linear output
 
     def reparameterize(self, mu, logvar):
-        "Reparameterize using the reparameterization trick"
+        """
+        Sample z via the reparameterization trick.
+
+        Parameters
+        ----------
+        mu : torch.Tensor, shape (n, z_dim)
+            Mean of q(z|x).
+        logvar : torch.Tensor, shape (n, z_dim)
+            Log-variance of q(z|x).
+
+        Returns
+        -------
+        z : torch.Tensor, shape (n, z_dim)
+            Latent samples.
+        """
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
     # ---------- Loss components ----------
     def kl_loss(self, mu, logvar):
-        "Kullback-Leibler divergence loss"
+        """
+        Compute the KL divergence term E[ D_KL(q(z|x) || p(z)) ].
+
+        Parameters
+        ----------
+        mu : torch.Tensor, shape (n, z_dim)
+        logvar : torch.Tensor, shape (n, z_dim)
+
+        Returns
+        -------
+        kl : torch.Tensor
+            Mean KL divergence across the batch.
+        """
         kl_per_sample = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
         return kl_per_sample.mean()
 
     def recon_loss(self, x, x_recon):
-        "Reconstruction loss"
+        """
+        Compute per-sample reconstruction loss (MSE sum over features).
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape (n, input_dim)
+        x_recon : torch.Tensor, shape (n, input_dim)
+
+        Returns
+        -------
+        rec_vec : torch.Tensor, shape (n,)
+            Squared-error per sample summed over feature dimension.
+        """
         return ((x_recon - x)**2).sum(dim=1)
 
     def distance_preserving_loss(self, z, s, mask=None):
-        """Distance preserving loss using absolute deviation over selected edges.
+        """
+        Distance-preserving loss as mean absolute deviation over selected pairs.
 
-        Incorporates optional k-NN masking (cached) and λ reparameterization.
+        Parameters
+        ----------
+        z : torch.Tensor, shape (n, z_dim)
+            Latent coordinates.
+        s : torch.Tensor, shape (n, 2)
+            Spatial coordinates.
+        mask : torch.Tensor | None, shape (n, n), optional
+            Optional binary mask. If None, uses `mask_k` to construct a k-NN
+            union mask; otherwise all upper-triangular pairs are used.
+
+        Returns
+        -------
+        ldp : torch.Tensor
+            Mean absolute discrepancy | ||z_i - z_j|| - λ ||s_i - s_j|| | over
+            selected (i, j), i < j.
         """
         Dz = torch.cdist(z, z, p=2)
         Ds = torch.cdist(s, s, p=2)
@@ -111,7 +229,20 @@ class dpVAE(nn.Module):
 
     # ---------- Forward ----------
     def forward(self, x):
-        "Forward pass"
+        """
+        Standard VAE forward pass.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape (n, input_dim)
+
+        Returns
+        -------
+        x_recon : torch.Tensor, shape (n, input_dim)
+        mu : torch.Tensor, shape (n, z_dim)
+        logvar : torch.Tensor, shape (n, z_dim)
+        z : torch.Tensor, shape (n, z_dim)
+        """
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
         x_recon = self.decode(z)
@@ -119,7 +250,28 @@ class dpVAE(nn.Module):
 
     # ---------- Full dp-VAE loss ----------
     def loss_function(self, x, s, mask=None):
-        "Compute the full loss for the dp-VAE"
+        """
+        Compute the weighted ELBO + distance-preserving loss.
+
+        Parameters
+        ----------
+        x : torch.Tensor, shape (n, input_dim)
+        s : torch.Tensor, shape (n, 2)
+        mask : torch.Tensor | None, shape (n, n), optional
+
+        Returns
+        -------
+        total : torch.Tensor
+            Weighted total objective.
+        rec_vec : torch.Tensor, shape (n,)
+            Per-sample reconstruction losses (sum over features).
+        kl : torch.Tensor
+            KL divergence term (scalar).
+        ldp : torch.Tensor
+            Distance-preserving loss (scalar).
+        lam : torch.Tensor
+            Current clamped λ.
+        """
         x_recon, mu, logvar, z = self.forward(x)
         rec_vec = self.recon_loss(x, x_recon)          # per-sample
         rec_mean = rec_vec.mean()                      # scalar for objective
@@ -131,7 +283,15 @@ class dpVAE(nn.Module):
 
     # --------- λ helpers & mask utilities ---------
     def current_lambda(self):
-        "Return clamped λ (exp of lam_raw or fixed buffer)." 
+        """
+        Return current clamped λ value.
+
+        Returns
+        -------
+        lam : torch.Tensor
+            Scalar tensor equal to clamp(exp(lam_raw), [LAM_MIN, LAM_MAX])
+            if learnable; otherwise the fixed buffer, clamped similarly.
+        """
         if self.learn_lam:
             lam = torch.exp(self.lam_raw)
         else:
@@ -144,11 +304,28 @@ class dpVAE(nn.Module):
         return self.current_lambda()
 
     def _get_cached_mask(self, s: torch.Tensor):
-        """Return a symmetric boolean mask (n,n) according to mask_k specification.
+        """
+        Build or fetch a symmetric boolean mask (n, n) per `mask_k` spec.
 
         Rules (paper-consistent Eq. (5)):
-          * single int k: standard k-NN graph (undirected) ⇒ binary mask
-          * iterable of ints: union of each individual k-NN graph ⇒ binary mask
+        - single int k: standard k-NN graph (undirected) ⇒ binary mask
+        - iterable of ints: union of each individual k-NN graph ⇒ binary mask
+        - iterable containing None: interpret as full pairwise (disable masking)
+
+        Parameters
+        ----------
+        s : torch.Tensor, shape (n, 2)
+            Spatial coordinates.
+
+        Returns
+        -------
+        mask : torch.Tensor | None, shape (n, n)
+            Symmetric boolean mask on the same device as `s`, or None to
+            indicate full pairwise usage.
+
+        Notes
+        -----
+        Masks are cached by (mode, n, ks_sorted) for efficiency.
         """
         n = s.size(0)
         if self.mask_k is None:
@@ -201,51 +378,65 @@ def train_and_eval(alpha2, beta, lam, X, S, mask=None, X_val=None, S_val=None,
                    max_epochs=2000, patience=200, stress_tol=1e-5, obj_tol=1e-5,
                    select_metric="stress", objective_resets_patience=False,
                    include_lam_reg_in_obj=False, return_all=False, mask_k=None):
-    """Train dpVAE with refined dual monitoring (stress + dp objective) and robust early stopping.
+    """
+    Train a dpVAE with dual monitoring (stress + objective) and early stopping.
 
     Parameters
     ----------
-    alpha2, beta, lam: floats
-        Hyperparameters for distance preserving term, KL weight (β), and initial λ.
-    X, S: torch.Tensor
-        Training expression matrix and spatial coordinates (n x g, n x 2).
-    mask: torch.Tensor or None
-        Optional pairwise mask (n x n) for distance preserving term.
-    X_val, S_val: torch.Tensor or None
-        Optional validation split. If provided, stress is computed on validation set; otherwise on train.
-    max_epochs: int
-        Maximum training epochs.
-    patience: int
-        Number of epochs with no primary metric improvement (after warm-up) before stopping.
-    stress_tol: float
-        Minimum relative improvement required to accept a new best stress.
-    obj_tol: float
-        Minimum improvement required to accept a new best objective.
-    select_metric: {"stress", "objective"}
-        Which metric determines the final restored model. Stress is recommended.
-    objective_resets_patience: bool
-        If True, an objective improvement (without stress improvement) also resets patience.
-    include_lam_reg_in_obj: bool
-        If True, λ regularization term is added into the tracked objective value.
-    return_all: bool
-        If True, return a dict with both best states; else return (best_metric_value, best_state) for backward compatibility.
-
-    Early Stopping Logic
-    --------------------
-    * Warm-up phase (epochs <= pre_lambda_epochs): λ forced to 0, no early stopping updates recorded.
-    * Post warm-up: Track two best states separately:
-        - best_stress_state: lowest stress (primary)
-        - best_obj_state: lowest dp objective (secondary)
-      Stress improvement always resets patience. Objective improvement only updates best_obj_state and resets
-      patience iff objective_resets_patience=True.
-    * Training stops when (epoch > warm-up) AND patience_counter >= patience.
+    alpha2 : float
+        Weight for the distance-preserving term.
+    beta : float
+        KL temperature (β) in the ELBO.
+    lam : float
+        Initial λ value.
+    X : torch.Tensor, shape (n, g)
+        Training expression matrix on current device.
+    S : torch.Tensor, shape (n, 2)
+        Training spatial coordinates on current device.
+    mask : torch.Tensor | None, shape (n, n), optional
+        Optional pairwise mask for the DP term.
+    X_val : torch.Tensor | None, shape (n_val, g), optional
+        Optional validation expressions. If provided, stress is computed on
+        validation; otherwise on train.
+    S_val : torch.Tensor | None, shape (n_val, 2), optional
+        Optional validation spatial coordinates.
+    max_epochs : int, default=2000
+        Maximum number of epochs.
+    patience : int, default=200
+        Epochs without primary metric improvement before stopping (post warm-up).
+    stress_tol : float, default=1e-5
+        Minimum improvement to accept a new best stress.
+    obj_tol : float, default=1e-5
+        Minimum improvement to accept a new best objective.
+    select_metric : {"stress", "objective"}, default="stress"
+        Which metric determines the final restored state.
+    objective_resets_patience : bool, default=False
+        If True, objective improvements also reset patience.
+    include_lam_reg_in_obj : bool, default=False
+        If True, include the λ-regularization in the objective tracked for selection.
+    return_all : bool, default=False
+        If True, return a dict of both best states and metadata; otherwise
+        return a tuple (best_value, best_state).
+    mask_k : int | Iterable[int | None] | None, optional
+        k-NN masking configuration forwarded to the model.
 
     Returns
     -------
-    If return_all=False: (best_value, best_state)
-        best_value is best stress (if select_metric=="stress") else best objective.
-    If return_all=True: dict with keys
-        {"best_stress", "best_dp_obj", "best_stress_state", "best_obj_state", "final_epoch"}
+    best_value, best_state : tuple[float, dict]
+        If `return_all=False`, the best metric value and the corresponding
+        state_dict (as a plain dict) according to `select_metric`.
+    info : dict
+        If `return_all=True`, a dict with keys 'best_stress', 'best_dp_obj',
+        'best_stress_state', 'best_obj_state', 'final_epoch',
+        'selected_metric', and 'selected_value'.
+
+    Notes
+    -----
+    Early stopping:
+    - Warm-up (epochs ≤ `pre_lambda_epochs`): DP term disabled; no tracking.
+    - Post warm-up: track best stress and best objective independently;
+      patience resets on stress improvement, and optionally on objective
+      improvement depending on `objective_resets_patience`.
     """
     model = dpVAE(
         input_dim=X.shape[1], z_dim=2,
