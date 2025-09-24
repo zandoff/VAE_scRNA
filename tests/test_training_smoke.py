@@ -1,6 +1,5 @@
 import torch
-import dp_VAE as dp
-
+from dp_VAE import dp_VAE as dp
 
 def test_train_and_eval_smoke_cpu():
     """
