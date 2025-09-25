@@ -1,0 +1,70 @@
+
+[project]
+name = 'dp_VAE'
+version = '0.0.1'
+authors = [
+  { name='Lorenzo Porrini', email='lorenzo.porrini2@studio.unibo.it' },
+]
+description = 'Distance Preserving Variational AutoEncoder applied to spatial transcriptomics data.'
+readme = 'README.md'
+requires-python = '>=3'
+license = {text = 'MIT'}
+keywords = [
+  'Spatial Transcriptomics',
+  'Variational AutoEncoder',
+]
+maintainers = [
+  { name='Lorenzo Porrini', email='lorenzo.porrini2@studio.unibo.it' },
+]
+classifiers = [
+  'Natural Language :: English',
+  'Operating System :: MacOS :: MacOS X',
+  'Operating System :: POSIX',
+  'Operating System :: POSIX :: Linux',
+  'Operating System :: Microsoft :: Windows',
+  'Programming Language :: Python',
+  'Programming Language :: Python :: 3',
+  'Programming Language :: Python :: 3.5',
+  'Programming Language :: Python :: 3.6',
+  'Programming Language :: Python :: 3.7',
+  'Programming Language :: Python :: 3.8',
+  'Programming Language :: Python :: 3.9',
+  'Programming Language :: Python :: 3.10',
+  'Programming Language :: Python :: 3.11',
+  'Programming Language :: Python :: Implementation :: PyPy'
+]
+dependencies = [
+  'torch',
+  'torchvision',
+  'torchaudio',
+  'leidenalg',
+  'matplotlib',
+  'numpy',
+  'pandas',
+  'python_igraph',
+  'scanpy',
+  'scikit_learn',
+  'scipy',
+  'seaborn',
+]
+
+[project.optional-dependencies]
+dev = [
+  'pytest',
+  'codecov',
+  'pytest-cov',
+]
+
+[project.scripts]
+dp_VAE = 'dp_VAE.__main__:main'
+
+[project.urls]
+'Homepage' = 'https://github.com/zandoff/VAE_scRNA'
+'Bug Tracker' = 'https://github.com/zandoff/VAE_scRNA/issues'
+
+
+[build-system]
+requires = [
+  'setuptools>=61.0',
+]
+build-backend = 'setuptools.build_meta'
