@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from dp_VAE import functions as FN
+from dp_VAE import utils as FN
 
 
 def test_pairwise_corr_keys_and_shapes():
