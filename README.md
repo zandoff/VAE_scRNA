@@ -38,15 +38,20 @@ The repository is designed to work on 10x Visium spatial transcriptome datasets 
 
 ## Installation
 </div>
+
 From terminal go into an empty folder and clone this repository:
 
 ```shell
 git clone https://github.com/zandoff/VAE_scRNA
 ```
 
-Once the repository is cloned the user will have access to all the files needed.
+Once the repository is cloned the user will have access to all required files.
 
-### Required packages
+<div align="center">
+
+Required packages
+
+</div>
 
 To install all required packages, run the following command:
 
@@ -68,3 +73,32 @@ conda activate vae_scrna
 # Then install requirements
 pip install -r requirements.txt
 ```
+
+The directory structure should look like this:
+
+```
+├── data/                 <- Folder containing all datasets
+├── tests/                <- Folder containing all test files
+│   ├── __init__.py
+│   ├── test_geometry_utils.py
+│   ├── test_mask_k.py
+│   └── test_training.py
+├── dp_VAE/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── dp_VAE.py             <- Module for VAE implementation
+│   ├── train_eval.py         <- Module for training loop and evaluation
+│   ├── utils.py              <- Module with utilities
+├── .gitignore
+├── .gitattributes
+├── requirements.txt  <- List of required libraries
+├── setup.py
+├── pyproject.toml
+├── LICENSE
+└── README.md
+```
+
+<div align="center">
+
+## Running the script
+</div>
