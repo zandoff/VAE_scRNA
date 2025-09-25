@@ -39,3 +39,16 @@ data/*.tsv
 .env
 .envrc
 
+# temporary files created by users
+cli_test_main.py
+test_main.py
+
+# plot folders
+heatmaps/
+triplets/
+
+# Datasets
+data/
+
+# Results
+results/
