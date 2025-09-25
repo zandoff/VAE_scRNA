@@ -1,6 +1,6 @@
 import dp_VAE as dp
 import utils as FN
-import training as TR
+import train_eval as TR
 import warnings
 import argparse
 import os
