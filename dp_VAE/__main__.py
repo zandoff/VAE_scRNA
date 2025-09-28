@@ -196,9 +196,9 @@ def main():
             input_dim = X.shape[1]
             
             # Create model instances
-            model_stress = dp.VAE(input_dim=input_dim, device=device)
-            model_procrustes = dp.VAE(input_dim=input_dim, device=device)
-            model_mixed = dp.VAE(input_dim=input_dim, device=device)
+            model_stress = dp.dpVAE(input_dim=input_dim)
+            model_procrustes = dp.dpVAE(input_dim=input_dim)
+            model_mixed = dp.dpVAE(input_dim=input_dim)
             
             # Load state dictionaries
             stress_path = os.path.join(model_dir, f"best_model_stress_{key}.pt")
@@ -207,18 +207,21 @@ def main():
             
             if os.path.exists(stress_path):
                 model_stress.load_state_dict(torch.load(stress_path, map_location=device))
+                model_stress = model_stress.to(device)
                 best_models_stress[key] = model_stress
-                print(f"Loaded stress model for {key}")
+                print(f"Loaded stress model for {key} (on {device})")
                 
             if os.path.exists(procrustes_path):
                 model_procrustes.load_state_dict(torch.load(procrustes_path, map_location=device))
+                model_procrustes = model_procrustes.to(device)
                 best_models_procrustes[key] = model_procrustes
-                print(f"Loaded procrustes model for {key}")
+                print(f"Loaded procrustes model for {key} (on {device})")
                 
             if os.path.exists(mixed_path):
                 model_mixed.load_state_dict(torch.load(mixed_path, map_location=device))
+                model_mixed = model_mixed.to(device)
                 best_models_mixed[key] = model_mixed
-                print(f"Loaded mixed model for {key}")
+                print(f"Loaded mixed model for {key} (on {device})")
         
         # Set up output directory
         output_dir = os.path.join(model_dir, "analysis")
