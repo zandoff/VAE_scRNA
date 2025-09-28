@@ -1,6 +1,6 @@
 import torch
-import dp_VAE as dp
-import utils as FN
+from dp_VAE import dp_VAE as dp
+from dp_VAE import utils as FN
 
 def parameter_sweep(XS_pairs, splits, alpha2_values, mask_k_values, lam_factors=None, 
                     max_epochs=2000, patience=200, device=None):
