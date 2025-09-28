@@ -1,6 +1,6 @@
-import dp_VAE as dp
-import utils as FN
-import train_eval as TR
+from dp_VAE import dp_VAE as dp
+from dp_VAE import utils as FN
+from dp_VAE import train_eval as TR
 import warnings
 import argparse
 import os
@@ -159,7 +159,85 @@ def main():
         print(f"\nAll results saved to {args.output_dir}")
     
     elif args.command == 'analyze':
-        print("Analysis mode not yet implemented")
+        model_dir = args.model_dir
+        if not os.path.exists(model_dir):
+            print(f"Error: Model directory '{model_dir}' not found.")
+            return
+            
+        print(f"\n=== LOADING MODELS FROM {model_dir} ===")
+        
+        # Get the dataset keys from the available model files
+        model_files = [f for f in os.listdir(model_dir) if f.startswith("best_model_") and f.endswith(".pt")]
+        dataset_keys = set()
+        for mf in model_files:
+            # Extract dataset key from filename: best_model_TYPE_KEY.pt
+            parts = mf.split('_')
+            if len(parts) >= 4:
+                dataset_keys.add('_'.join(parts[3:]).replace('.pt', ''))
+        
+        if not dataset_keys:
+            print("Error: No model files found with expected naming pattern.")
+            return
+            
+        print(f"Found models for datasets: {', '.join(dataset_keys)}")
+        
+        # If datasets is None, pass None to use all available datasets
+        print("\n=== PREPROCESSING DATA ===")
+        XS_pairs, splits = FN.preprocess_data(dataset_keys=list(dataset_keys) if dataset_keys else None, device=device)
+        
+        # Load the models
+        best_models_stress = {}
+        best_models_procrustes = {}
+        best_models_mixed = {}
+        
+        for key in dataset_keys:
+            # Get dataset dimensions to create model instances
+            X, _ = XS_pairs[key]
+            input_dim = X.shape[1]
+            
+            # Create model instances
+            model_stress = dp.VAE(input_dim=input_dim, device=device)
+            model_procrustes = dp.VAE(input_dim=input_dim, device=device)
+            model_mixed = dp.VAE(input_dim=input_dim, device=device)
+            
+            # Load state dictionaries
+            stress_path = os.path.join(model_dir, f"best_model_stress_{key}.pt")
+            procrustes_path = os.path.join(model_dir, f"best_model_procrustes_{key}.pt")
+            mixed_path = os.path.join(model_dir, f"best_model_mixed_{key}.pt")
+            
+            if os.path.exists(stress_path):
+                model_stress.load_state_dict(torch.load(stress_path, map_location=device))
+                best_models_stress[key] = model_stress
+                print(f"Loaded stress model for {key}")
+                
+            if os.path.exists(procrustes_path):
+                model_procrustes.load_state_dict(torch.load(procrustes_path, map_location=device))
+                best_models_procrustes[key] = model_procrustes
+                print(f"Loaded procrustes model for {key}")
+                
+            if os.path.exists(mixed_path):
+                model_mixed.load_state_dict(torch.load(mixed_path, map_location=device))
+                best_models_mixed[key] = model_mixed
+                print(f"Loaded mixed model for {key}")
+        
+        # Set up output directory
+        output_dir = os.path.join(model_dir, "analysis")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        print("\n=== ANALYZING TRIPLET GEOMETRY ===")
+        triplet_results = FN.analyze_triplet_geometry(
+            XS_pairs, splits,
+            best_models_stress, best_models_procrustes, best_models_mixed,
+            output_dir=output_dir
+        )
+        
+        print("\n=== GENERATING HEATMAPS ===")
+        FN.generate_heatmaps(
+            XS_pairs, splits, best_models_stress,
+            output_dir=output_dir
+        )
+        
+        print(f"\nAnalysis results saved to {output_dir}")
     else:
         parser.print_help()
 
