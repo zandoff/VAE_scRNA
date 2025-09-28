@@ -98,7 +98,66 @@ The directory structure should look like this:
 └── README.md
 ```
 
+Note: The `data/` folder is not included when you clone the repository. It will be created automatically when you first run the script, and the required datasets will be downloaded at that time.
+
 <div align="center">
 
-## Running the script
+## Running
 </div>
+
+After installing the requirements, you can run the script using the following commands from the terminal:
+
+### Basic usage
+
+To run the full pipeline with default parameters (all datasets, default hyperparameter ranges):
+
+```bash
+# Navigate to the repository directory if not already there
+cd VAE_scRNA
+
+# Run the script with default parameters
+python -m dp_VAE run
+```
+
+### Advanced usage
+
+You can customize various parameters:
+
+```bash
+# Run with specific datasets
+python -m dp_VAE run --datasets sagittal_posterior sagittal_anterior
+
+# Run with custom hyperparameters
+python -m dp_VAE run --alpha2 5 10 20 --mask_k None 5 10 --lam_factors 0.1 0.5 1
+
+# Specify output directory
+python -m dp_VAE run --output_dir ./my_results
+
+# Run on specific device
+python -m dp_VAE run --device cuda  # or --device cpu
+```
+
+### Available parameters
+
+- `--datasets`: Specific datasets to use (options: sagittal_posterior, sagittal_posterior_2, sagittal_anterior, sagittal_anterior_2, whole_brain, kidney)
+- `--alpha2`: Values for alpha2 parameter (DP loss weight)
+- `--mask_k`: Values for mask_k parameter (use 'None' for no masking)
+- `--lam_factors`: Scaling factors for lambda
+- `--max_epochs`: Maximum number of training epochs (default: 2000)
+- `--patience`: Patience for early stopping (default: 200)
+- `--output_dir`: Directory for output files (default: ./results)
+- `--device`: Device to use (cuda or cpu)
+
+### Using pre-trained models
+
+After training, you can use the pre-trained models for analysis without retraining:
+
+```bash
+# Analyze pre-trained models
+python -m dp_VAE analyze --model_dir ./results
+```
+
+This will:
+- Load the pre-trained models from the specified directory
+- Run the analysis steps (triplet geometry and heatmaps) without retraining
+- Save the analysis results in a subfolder named "analysis" within your model directory
