@@ -66,6 +66,10 @@ def main():
     analyze_parser = subparsers.add_parser('analyze', help='Analyze saved models')
     analyze_parser.add_argument("--model_dir", type=str, required=True,
                                help="Directory containing saved models")
+    analyze_parser.add_argument("--source_dataset", type=str, default=None,
+                               help="Source dataset name for the pre-trained model (if using a model on a different dataset)")
+    analyze_parser.add_argument("--target_datasets", type=str, nargs='+', default=None,
+                               help="Target dataset(s) to analyze with the pre-trained model")
     
     args = parser.parse_args()
     
@@ -168,37 +172,101 @@ def main():
         
         # Get the dataset keys from the available model files
         model_files = [f for f in os.listdir(model_dir) if f.startswith("best_model_") and f.endswith(".pt")]
-        dataset_keys = set()
+        available_datasets = set()
         for mf in model_files:
             # Extract dataset key from filename: best_model_TYPE_KEY.pt
             parts = mf.split('_')
             if len(parts) >= 4:
-                dataset_keys.add('_'.join(parts[3:]).replace('.pt', ''))
+                available_datasets.add('_'.join(parts[3:]).replace('.pt', ''))
         
-        if not dataset_keys:
+        if not available_datasets:
             print("Error: No model files found with expected naming pattern.")
             return
             
-        print(f"Found models for datasets: {', '.join(dataset_keys)}")
+        print(f"Found models for datasets: {', '.join(available_datasets)}")
         
-        # If datasets is None, pass None to use all available datasets
-        print("\n=== PREPROCESSING DATA ===")
-        XS_pairs, splits = FN.preprocess_data(dataset_keys=list(dataset_keys) if dataset_keys else None, device=device)
+        # Handle cross-dataset analysis
+        if args.source_dataset and args.target_datasets:
+            # Validate the source dataset
+            if args.source_dataset not in available_datasets:
+                print(f"Error: Source dataset '{args.source_dataset}' not found in available models.")
+                return
+                
+            source_dataset = args.source_dataset
+            target_datasets = args.target_datasets
+            print(f"Using model trained on '{source_dataset}' to analyze: {', '.join(target_datasets)}")
+            
+            # Process target datasets
+            XS_pairs, splits = FN.preprocess_data(dataset_keys=target_datasets, device=device)
+        else:
+            # Standard analysis - analyze the same datasets used for training
+            source_dataset = None
+            target_datasets = list(available_datasets)
+            print("\n=== PREPROCESSING DATA ===")
+            XS_pairs, splits = FN.preprocess_data(dataset_keys=target_datasets, device=device)
         
         # Load the models
         best_models_stress = {}
         best_models_procrustes = {}
         best_models_mixed = {}
         
-        for key in dataset_keys:
-            # Get dataset dimensions to create model instances
-            X, _ = XS_pairs[key]
-            input_dim = X.shape[1]
+        if source_dataset:
+            # Cross-dataset analysis - load a single source model and apply to all target datasets
+            print(f"\n=== APPLYING MODEL FROM {source_dataset} TO TARGET DATASETS ===")
             
-            # Create model instances
-            model_stress = dp.dpVAE(input_dim=input_dim)
-            model_procrustes = dp.dpVAE(input_dim=input_dim)
-            model_mixed = dp.dpVAE(input_dim=input_dim)
+            for target_key in target_datasets:
+                # Get dimensions from the target dataset for model creation
+                X, _ = XS_pairs[target_key]
+                input_dim = X.shape[1]
+                
+                # Create model instances for this target dataset
+                model_stress = dp.dpVAE(input_dim=input_dim)
+                model_procrustes = dp.dpVAE(input_dim=input_dim)
+                model_mixed = dp.dpVAE(input_dim=input_dim)
+                
+                # Source model paths
+                stress_path = os.path.join(model_dir, f"best_model_stress_{source_dataset}.pt")
+                procrustes_path = os.path.join(model_dir, f"best_model_procrustes_{source_dataset}.pt")
+                mixed_path = os.path.join(model_dir, f"best_model_mixed_{source_dataset}.pt")
+                
+                # Load and apply source model to this target dataset
+                if os.path.exists(stress_path):
+                    try:
+                        model_stress.load_state_dict(torch.load(stress_path, map_location=device))
+                        model_stress = model_stress.to(device)
+                        best_models_stress[target_key] = model_stress
+                        print(f"Applied stress model from {source_dataset} to {target_key} (on {device})")
+                    except Exception as e:
+                        print(f"Error applying stress model to {target_key}: {e}")
+                
+                if os.path.exists(procrustes_path):
+                    try:
+                        model_procrustes.load_state_dict(torch.load(procrustes_path, map_location=device))
+                        model_procrustes = model_procrustes.to(device)
+                        best_models_procrustes[target_key] = model_procrustes
+                        print(f"Applied procrustes model from {source_dataset} to {target_key} (on {device})")
+                    except Exception as e:
+                        print(f"Error applying procrustes model to {target_key}: {e}")
+                
+                if os.path.exists(mixed_path):
+                    try:
+                        model_mixed.load_state_dict(torch.load(mixed_path, map_location=device))
+                        model_mixed = model_mixed.to(device)
+                        best_models_mixed[target_key] = model_mixed
+                        print(f"Applied mixed model from {source_dataset} to {target_key} (on {device})")
+                    except Exception as e:
+                        print(f"Error applying mixed model to {target_key}: {e}")
+        else:
+            # Standard analysis - load models for their respective datasets
+            for key in target_datasets:
+                # Get dataset dimensions to create model instances
+                X, _ = XS_pairs[key]
+                input_dim = X.shape[1]
+                
+                # Create model instances
+                model_stress = dp.dpVAE(input_dim=input_dim)
+                model_procrustes = dp.dpVAE(input_dim=input_dim)
+                model_mixed = dp.dpVAE(input_dim=input_dim)
             
             # Load state dictionaries
             stress_path = os.path.join(model_dir, f"best_model_stress_{key}.pt")
