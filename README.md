@@ -153,7 +153,7 @@ python -m dp_VAE run --device cuda  # or --device cpu
 After training, you can use the pre-trained models for analysis without retraining:
 
 ```bash
-# Analyze pre-trained models
+# Analyze pre-trained models on their original datasets
 python -m dp_VAE analyze --model_dir ./results
 ```
 
@@ -161,3 +161,17 @@ This will:
 - Load the pre-trained models from the specified directory
 - Run the analysis steps (triplet geometry and heatmaps) without retraining
 - Save the analysis results in a subfolder named "analysis" within your model directory
+
+### Cross-dataset analysis
+
+You can also apply a model trained on one dataset to analyze different datasets:
+
+```bash
+# Apply a model trained on one dataset to different datasets
+python -m dp_VAE analyze --model_dir ./results --source_dataset sagittal_posterior --target_datasets sagittal_anterior whole_brain
+```
+
+This feature allows you to:
+- Test how well a model generalizes to other datasets
+- Apply a well-trained model to new or smaller datasets
+- Compare performance across different spatial transcriptomics samples
