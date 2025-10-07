@@ -1,6 +1,6 @@
 <div align="center">
 
-# Distance-preseving Variational AutoEncoder applied to spatial transcriptomics data
+# Distance-preserving Variational AutoEncoder applied to spatial transcriptomics data
 
 </div>
 
@@ -41,7 +41,7 @@ The repository is designed to work on 10x Visium spatial transcriptome datasets 
 
 From terminal go into an empty folder and clone this repository:
 
-```shell
+```bash
 git clone https://github.com/zandoff/VAE_scRNA
 ```
 
@@ -53,15 +53,18 @@ Required packages
 
 </div>
 
-To install all required packages, run the following command:
+To install the package and the necessary requirements run the following command:
 
-```shell
+```bash
+cd VAE_scRNA
+pip install .
 pip install -r requirements.txt
 ```
+First it will install the package and then it will install all necessary dependencies including PyTorch (with CUDA 12.4 support), scanpy, and other scientific computing libraries needed to run the code. 
+CUDA 12.4 libraries are required to run the training process with GPU; if you don't have them installed, please refer to the [NVIDIA documentation](https://developer.nvidia.com/cuda-12-4-0-download-archive) for installation instructions.
+If you prefer to use a virtual environment (recommended), you can create one first:
 
-This will install all necessary dependencies including PyTorch (with CUDA support), scanpy, and other scientific computing libraries needed to run the code. If you prefer to use a virtual environment (recommended), you can create one first:
-
-```shell
+```bash
 # Using venv
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -116,7 +119,7 @@ To run the full pipeline with default parameters (all datasets, default hyperpar
 cd VAE_scRNA
 
 # Run the script with default parameters
-python -m dp_VAE run
+dp_VAE run
 ```
 
 ### Advanced usage
@@ -125,16 +128,16 @@ You can customize various parameters:
 
 ```bash
 # Run with specific datasets
-python -m dp_VAE run --datasets sagittal_posterior sagittal_anterior
+dp_VAE run --datasets sagittal_posterior sagittal_anterior
 
 # Run with custom hyperparameters
-python -m dp_VAE run --alpha2 5 10 20 --mask_k None 5 10 --lam_factors 0.1 0.5 1
+dp_VAE run --alpha2 5 10 20 --mask_k None 5 10 --lam_factors 0.1 0.5 1
 
 # Specify output directory
-python -m dp_VAE run --output_dir ./my_results
+dp_VAE run --output_dir ./my_results
 
 # Run on specific device
-python -m dp_VAE run --device cuda  # or --device cpu
+dp_VAE run --device cuda  # or --device cpu
 ```
 
 ### Available parameters
@@ -154,7 +157,7 @@ After training, you can use the pre-trained models for analysis without retraini
 
 ```bash
 # Analyze pre-trained models on their original datasets
-python -m dp_VAE analyze --model_dir ./results
+dp_VAE analyze --model_dir ./results
 ```
 
 This will:
@@ -168,7 +171,7 @@ You can also apply a model trained on one dataset to analyze different datasets:
 
 ```bash
 # Apply a model trained on one dataset to different datasets
-python -m dp_VAE analyze --model_dir ./results --source_dataset sagittal_posterior --target_datasets sagittal_anterior whole_brain
+dp_VAE analyze --model_dir ./results --source_dataset sagittal_posterior --target_datasets sagittal_anterior whole_brain
 ```
 
 This feature allows you to:
