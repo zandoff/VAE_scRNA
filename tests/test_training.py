@@ -1,6 +1,11 @@
 import torch
 from dp_VAE import dp_VAE as dp
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from dp_VAE import dp_VAE
+device = dp_VAE.device
 def test_train_and_eval_smoke_cpu():
     """
     Smoke test for the train_and_eval function on CPU.
@@ -16,8 +21,8 @@ def test_train_and_eval_smoke_cpu():
     None
     """
     torch.manual_seed(0)
-    X = torch.randn(30, 12)
-    S = torch.randn(30, 2)
+    X = torch.randn(30, 12, device=device)
+    S = torch.randn(30, 2, device=device)
     # Make S have some structure
     S = (S - S.mean(0)) / (S.std(0) + 1e-6)
     val_split = 10
@@ -41,7 +46,7 @@ def test_train_and_eval_smoke_cpu():
     assert state is None or isinstance(state, dict)
 
     # Rebuild and encode a batch
-    model = dp.dpVAE(input_dim=X.shape[1], z_dim=2, alpha1=1.0, beta=2.0, alpha2=5.0, lam_init=1.0, learn_lam=True, mask_k=4)
+    model = dp.dpVAE(input_dim=X.shape[1], z_dim=2, alpha1=1.0, beta=2.0, alpha2=5.0, lam_init=1.0, learn_lam=True, mask_k=4).to(device)
     if state is not None:
         model.load_state_dict(state)
     with torch.no_grad():
